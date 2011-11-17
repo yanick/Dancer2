@@ -71,7 +71,7 @@ use Carp;
         warning
     );
 
-    $keywords{$_} = 1 for qw(
+    my %global_keywords = map +( $_ => 1 ), qw(
         after
         any
         before
@@ -111,7 +111,7 @@ use Carp;
     );
 
     sub _keyword_list { keys %keywords }
-    sub _is_global_keyword { $keywords{$_[1]} }
+    sub _is_global_keyword { $global_keywords{$_[1]} }
 }
 
 sub construct_export_map {
@@ -125,6 +125,8 @@ sub construct_export_map {
             };
         } else {
             $map{$keyword} = sub {
+                core_debug("[".$self->app->name."] -> $keyword(".join(', ', @_).")");
+                warn "inc is @INC";
                 croak "Function '$keyword' must be called from a route handler"
                     unless defined $self->app->context;
                 $self->$keyword(@_);
