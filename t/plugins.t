@@ -39,4 +39,19 @@ subtest 'plugin reserved keywords' => sub {
     }
 };
 
+subtest plugin_with_context_keywords => sub {
+
+    use t::lib::TestPlugin;
+    
+    get '/' => sub {
+        wrap_request_env;
+    };
+
+    use Dancer::Test;
+
+    my $r = dancer_response GET => '/';
+    is_deeply $r->[2][0], { },
+     'env is ok';
+};
+
 done_testing;
