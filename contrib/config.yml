@@ -14,6 +14,9 @@ engines:
   serializer:
     json:
       pretty: 1
+  session:
+    YAML:
+      session_dir: /tmp/dancer-sessions
 
 plugins:
   Foo:

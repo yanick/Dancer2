@@ -1,8 +1,11 @@
 use Dancer;
 use Data::Dumper;
 
+use Dancer::Plugin::Foo;
+
+
 get '/' => sub {
-    to_yaml(session());
+    to_yaml(read_session());
 };
 
 get '/write/:name/:value' => sub {

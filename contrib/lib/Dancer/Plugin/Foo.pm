@@ -5,6 +5,10 @@ use warnings;
 use Dancer;
 use Dancer::Plugin;
 
+register read_session => sub {
+    session;
+};
+
 register foo => sub {
     get '/foo' => sub {
         "/foo";
