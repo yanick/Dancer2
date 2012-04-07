@@ -112,7 +112,7 @@ sub has_hook {
     return exists $self->hooks->{$hook_name};
 }
 
-# Exectue the hook at the given position
+# Execute the hook at the given position
 sub execute_hooks {
     my ($self, $name, @args) = @_;
 
