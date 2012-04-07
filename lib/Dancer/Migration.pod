@@ -1,0 +1,43 @@
+=head1 NAME
+
+Dancer::Migration - Migrating Templates and Plugins From Dancer 1 to Dancer 2
+
+=head1 GENERAL TRICKS
+
+=head2 Under which version of Dancer am I running?
+
+Dancer 2 has the function C<dancer_version>, as does Dancer 1 as of released
+FIXME. To be totally safe, you can do:
+
+    $version = eval { int dancer_version() } || 1;
+
+=head1 PLUGINS
+
+=head2 C<register_plugin>
+
+In Dancer 2, the call to C<register_plugin()> requires the supported versions
+of Dancer to be specified, like so:
+
+    register_plugin for_versions => [ 1, 2 ];
+
+If the C<for_version> clause is not present, Dancer 2 will not load the plugin
+but will rather die with the error message:
+
+    Dancer::Plugin::Foo 1.23 does not support Dancer 2. at lib/Dancer/Plugin/Foo.pm line 289
+
+=head2 C<register>
+
+In Dancer 2, the first argument to C<register> is the I<$dsl> object.
+
+=head1 TESTS
+
+=head2 C<use Dancer::Test>
+
+In Dancer 2, to use a dancer app defined in its own module in a C<Dancer::Test> file, you
+have to pass the app class as an argument to the C<use>:
+
+    use TestApp;
+    use Dancer::Test 'TestApp';
+
+Dancer 1 will emit a warning to the effect that I<Odd number of elements in
+hash assignment at /.../Dancer/Test.pm line 52>, but will otherwise behave.
