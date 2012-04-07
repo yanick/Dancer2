@@ -45,18 +45,18 @@ sub dispatch {
 
         # warn "looking for $http_method $path_info";
 
+        ROUTE:
         foreach my $route (@{ $app->routes->{$http_method} }) {
             # warn "testing route ".$route->regexp;
 
             # TODO next if $r->has_options && (not $r->validate_options($request));
             # TODO store in route cache
 
-            my $match = $route->match($http_method => $path_info);
-            if ($match) {
-                # warn "got a match";
-                $context->request->_set_route_params($match);
-            }
+            # go to the next route if no match
+            my $match = $route->match($http_method => $path_info) 
+                or next ROUTE;
 
+            $context->request->_set_route_params($match);
 
             # if the request has been altered by a before filter, we should not continue
             # with this route handler, we should continue to walk through the
@@ -64,10 +64,9 @@ sub dispatch {
 #            next if $context->request->path_info ne $path_info 
 #                 || $context->request->method ne uc($http_method);
 
-            # go to the next route if no match
-            next if !$match;
-            my $content;
             $app->execute_hooks('core.app.before_request', $context);
+
+            my $content;
 
             if (! $context->response->is_halted) {
                 eval { $content = $route->execute($context) };
@@ -91,7 +90,9 @@ sub dispatch {
                     if ref($content); 
             }
 
-            $response->content(defined $content ? $content : '');
+            $response->content(defined $content ? $content : '') 
+                unless $response->content;
+
             $response->encode_content;
 
             return $response if $context->response->is_halted;
