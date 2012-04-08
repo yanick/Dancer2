@@ -65,15 +65,17 @@ sub dispatch {
 #                 || $context->request->method ne uc($http_method);
 
             $app->execute_hooks('core.app.before_request', $context);
+            my $response = $context->response;
 
             my $content;
-
-            if (! $context->response->is_halted) {
-                eval { $content = $route->execute($context) };
+            if ( $response->is_halted ) {
+                # if halted, it comes from the 'before' hook. Take its content
+                $content = $response->content;
+            }
+            else {
+                $content = eval { $route->execute($context) };
                 return $self->response_internal_error($@) if $@;    # 500
             }
-
-            my $response = $context->response;
 
             # routes should use 'content_type' as default, or 'text/html'
             if (!$response->header('Content-type')) {
@@ -85,22 +87,19 @@ sub dispatch {
             }
 
             # serialize if needed
-            if (defined $app->config->{serializer}) {
-                $content = $app->config->{serializer}->serialize($content) 
-                    if ref($content); 
-            }
+            $content = $app->config->{serializer}->serialize($content) 
+                if ref $content and defined $app->config->{serializer}; 
 
-            $response->content(defined $content ? $content : '') 
-                unless $response->is_halted;
+            $response->content(defined $content ? $content : '');
 
             $response->encode_content;
 
-            return $response if $context->response->is_halted;
+            return $response if $response->is_halted;
 
             # pass the baton if the response says so...
             if ($response->has_passed) {
-                $context->response->has_passed(0);
-                next;
+                $response->has_passed(0);  # clear for the next round
+                next ROUTE;
             }
 
             $app->execute_hooks('core.app.after_request', $response);
