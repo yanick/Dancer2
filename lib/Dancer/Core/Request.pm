@@ -45,6 +45,12 @@ has path_info => (
 has method => (
     is => 'rw',
     isa => sub { Dancer::Moo::Types::DancerHTTPMethod(@_) },
+    default => sub {
+        my $self = shift;
+        $self->env->{REQUEST_METHOD} || 'GET';
+    },
+    coerce => sub { uc $_[0] },
+    lazy => 1,
 );
 
 has content_type => (
@@ -170,7 +176,6 @@ sub BUILD {
     $self->_build_request_env();
     $self->_build_path();      
     $self->_build_path_info() ;
-    $self->_build_method();    
 
     $self->{_http_body} =
       HTTP::Body->new($self->content_type, $self->content_length);
@@ -201,7 +206,7 @@ sub make_forward_to {
                                     $params || {});
 
     if (exists($options->{method})) {
-        $new_request->method(uc $options->{method});
+        $new_request->method($options->{method});
     }
 
     $new_request->{params}  = $new_params;
@@ -426,6 +431,10 @@ sub _build_params {
 # http://search.cpan.org/dist/PSGI/PSGI.pod
 sub _build_path {
     my ($self) = @_;
+
+    # if it was passed in the constructor
+    return $self->path if defined $self->path;
+
     my $path = "";
 
     $path .= $self->script_name if defined $self->script_name;
@@ -453,11 +462,6 @@ sub _build_path_info {
         $info = $self->path;
     }
     $self->{path_info} = $info;
-}
-
-sub _build_method {
-    my ($self) = @_;
-    $self->{method} = $self->env->{REQUEST_METHOD};
 }
 
 sub _url_decode {

@@ -91,7 +91,7 @@ sub dispatch {
             }
 
             $response->content(defined $content ? $content : '') 
-                unless $response->content;
+                unless $response->is_halted;
 
             $response->encode_content;
 
