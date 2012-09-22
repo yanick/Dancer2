@@ -1,0 +1,29 @@
+How to smoke Dancer's plugins (Yanick style)
+
+1. Create a Pinto repo on your machine
+
+2. Get the list of Dancer plugins found on CPAN
+
+    $ sqlite3 ~/.cpan/cpandb.sql 'select dist_name from dists \
+        where dist_name like "Dancer-Plugin%"' \
+        | perl -pe's/-/::/g' > plugins.list
+
+3. Pull'em all in pinto
+
+    $ perl -ne'chomp; next if /^\s*#/; `pinto -v pull $_`' plugins.list
+
+Mind you, the command could have been as simple as
+
+    $ pinto -v pull < plugins
+
+but for two things: I wanted to be able to comment out problematic plugins in 
+the list and skip over them, and it seems that Pinto would abort commiting 
+all of the pulled distributions if one of them goes wrong.
+
+4. test'em
+
+    $ ./test_plugins.pl < plugins.list
+
+5. report the result
+
+    $ ./report.pl
