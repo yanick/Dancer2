@@ -78,7 +78,7 @@ sub _build_default_config {
 
     return {   
         %{ $self->runner_config },
-        template => 'Tiny',
+        template => $Dancer::API == 1 ? 'Simple' : 'Tiny',
         session => 'simple',
         route_handlers => {
             File => {

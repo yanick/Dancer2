@@ -16,6 +16,8 @@ our $VERSION   = '2.000000_01';
 $VERSION = eval $VERSION;
 our $AUTHORITY = 'SUKRIA';
 
+our $API = 1;  # by default, backward-compatible
+
 #
 # private
 #
@@ -35,6 +37,9 @@ sub import {
     my $syntax_only = 0;
     my $as_script   = 0;
     foreach (@args) {
+        if ( $_ eq ':v2' ) {
+            $API = 2;
+        }
         if ( $_ eq ':moose' ) {
             push @final_args, '!before', '!after';
         }
