@@ -449,7 +449,11 @@ to test.
 =cut
 
 sub import {
-    my ($class, %options) = @_;
+    my $class = shift;
+
+    my %options = @_ == 1 ? ( apps => [ @_ ] )
+                          : @_
+                          ;
 
     my @applications;
     if (ref $options{apps} eq ref([])) {
