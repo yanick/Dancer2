@@ -1,53 +1,28 @@
 use strict;
 use warnings;
 
-use File::Spec;
-use File::Temp 0.22;
-use LWP::UserAgent;
-use Test::More;
-use Test::TCP 1.13;
-use YAML;
+use Test::More tests => 4;
 
-my $tempdir = File::Temp::tempdir(CLEANUP => 1, TMPDIR => 1);
+{
+    package MyApp;
 
-Test::TCP::test_tcp(
-    client => sub {
-        my $port = shift;
+    use Dancer;
 
-        my $ua = LWP::UserAgent->new;
-        $ua->cookie_jar({file => "$tempdir/.cookies.txt"});
+    set session => 'Simple';
+    set logger => 'Null';
+    set serializer => 'JSON';
+    set template => 'Simple';
 
-        my $res = $ua->get("http://127.0.0.1:$port/main");
-        for my $type ( qw/session logger serializer template/ ) {
-            like $res->content, qr/^$type 1$/ms, "$type has context"
-        }
+    get '/main' => sub {
+        return join "\n",
+               map { $_ . ' '. ( defined( engine($_)->context ) ? 1 : 0 ) }
+                   qw/session logger serializer template/;
+    };
+}
 
-        File::Temp::cleanup();
-    },
-    server => sub {
-        my $port = shift;
+use Dancer::Test apps => ['MyApp'];
 
-        BEGIN {
-            use Dancer;
-            set session => 'Simple';
-            set logger => 'Null';
-            set serializer => 'JSON';
-            set template => 'Simple';
-        }
+response_content_like '/main'
+    => qr/^$_ 1$/ms, "$_ has context"
+    for qw/ serializer session template logger /;
 
-        get '/main' => sub {
-            my $response = "";
-            for my $type ( qw/session logger serializer template/ ) {
-                my $defined = defined(engine("$type")->context) ? 1 : 0;
-                $response .="$type $defined\n";
-            }
-            return $response;
-        };
-
-        setting appdir => $tempdir;
-        Dancer->runner->server->port($port);
-        start;
-    },
-);
-
-done_testing;
