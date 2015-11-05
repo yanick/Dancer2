@@ -1,423 +1,717 @@
-package Dancer2::Plugin;
-# ABSTRACT: Extending Dancer2's DSL with plugins
+package Dancer2::Plugin2;
+# ABSTRACT: base class for Dancer2 plugins
 
-use Moo::Role;
-use Carp 'croak', 'carp';
-use Dancer2::Core::DSL;
-use Scalar::Util qw();
+use strict;
+use warnings;
 
-# singleton for storing all keywords,
-# their code and the plugin they come from
+use Moo;
+use List::Util qw/ reduce /;
+use Attribute::Handlers;
+
+extends 'Exporter::Tiny';
+
+with 'Dancer2::Core::Role::Hookable';
+
+has app => (
+    is       => 'ro',
+    required => 1,
+);
+
+has config => (
+    is => 'ro',
+    lazy => 1,
+    default => sub { 
+        my $self = shift;
+        my $config = $self->app->config;
+        my $package = ref $self; # TODO
+        $package =~ s/Dancer2::Plugin:://;
+        $config->{plugins}{$package} || {};
+    },
+);
+
 my $_keywords = {};
+sub keywords { $_keywords }
 
-# singleton for storing all hooks and their aliases
-my $_hooks = {};
-
-# singleton for applying code-blocks at import time
-# so their code gets the callers DSL
-my $_on_import = {};
-
-sub register {
-    my $plugin = caller;
-    my $caller = caller(1);
-    my ( $keyword, $code, $options ) = @_;
-    $options ||= { is_global => 1 };
-
-    $keyword =~ /^[a-zA-Z_]+[a-zA-Z0-9_]*$/
-      or croak "You can't use '$keyword', it is an invalid name"
-      . " (it should match ^[a-zA-Z_]+[a-zA-Z0-9_]*\$ )";
-
-    if (grep { $_ eq $keyword }
-        keys %{ Dancer2::Core::DSL->dsl_keywords }
-      )
-    {
-        croak "You can't use '$keyword', this is a reserved keyword";
-    }
-
-    while ( my ( $plugin, $keywords ) = each %$_keywords ) {
-        if ( grep { $_->[0] eq $keyword } @$keywords ) {
-            croak "You can't use $keyword, "
-              . "this is a keyword reserved by $plugin";
-        }
-    }
-
-    $_keywords->{$plugin} ||= [];
-    push @{ $_keywords->{$plugin} },
-      [ $keyword, $code, $options ];
-}
-
-sub on_plugin_import(&) {
-    my $code   = shift;
-    my $plugin = caller;
-    $_on_import->{$plugin} ||= [];
-    push @{ $_on_import->{$plugin} }, $code;
-}
-
-sub register_plugin {
-    my $plugin = caller;
-    my $caller = caller(1);
-    my %params = @_;
-
-    # if the caller has no dsl method, we cant register the plugin
-    return if !$caller->can('dsl');
-
-    # the plugin consumes the DSL role
-    Moo::Role->apply_role_to_package( $plugin, 'Dancer2::Core::Role::DSL' );
-
-    # bind all registered keywords to the plugin
-    my $dsl = $caller->dsl;
-    for my $k ( @{ $_keywords->{$plugin} } ) {
-        my ( $keyword, $code, $options ) = @{$k};
-        {
-            no strict 'refs';
-            *{"${plugin}::${keyword}"} = $dsl->_apply_prototype($code, $options);
-        }
-    }
-
-# create the import method of the caller (the actual plugin) in order to make it
-# imports all the DSL's keyword when it's used.
-    my $import = sub {
+has '+hooks' => (
+    default => sub {
         my $plugin = shift;
+        my $name = 'plugin.' . lc ref $plugin;
+        $name =~ s/Dancer2::Plugin:://i;
+        $name =~ s/::/_/g;
 
-        # caller(1) because our import method is wrapped, see below
-        my $caller = caller(1);
-
-        for my $k ( @{ $_keywords->{$plugin} } ) {
-            my ( $keyword, $code, $options ) = @{$k};
-            my $is_global = exists $options->{is_global} && $options->{is_global};
-            $caller->dsl->register( $keyword, $is_global );
-        }
-
-        Moo::Role->apply_roles_to_object( $caller->dsl, $plugin );
-        $caller->dsl->export_symbols_to($caller);
-        $caller->dsl->dancer_app->register_plugin( $caller->dsl );
-
-        # add hooks
-        my $current_hooks = [ $caller->dsl->supported_hooks ];
-        my $current_aliases = $caller->dsl->hook_aliases;
-        for my $h ( keys %{ $_hooks->{$plugin} } ) {
-            push @$current_hooks, $h;
-            $current_aliases->{ $_hooks->{$plugin}->{$h} } = $h;
-			# If the hooks atttribute has already been constructed,
-			# add an entry so has_hook() finds these hooks.
-            $caller->dsl->hooks->{$h} = []
-                if ! exists $caller->dsl->hooks->{$h};
-        }
-        my $target = ref $caller->dsl;
-        {
-            no strict 'refs';
-            no warnings 'redefine';
-            *{"${target}::supported_hooks"} = sub {@$current_hooks};
-            *{"${target}::hook_aliases"}    = sub {$current_aliases};
-        }
-
-        for my $sub ( @{ $_on_import->{$plugin} } ) {
-            $sub->( $caller->dsl );
-        }
-    };
-    my $app_caller = caller();
-    {
-        no strict 'refs';
-        no warnings 'redefine';
-        my $original_import = *{"${app_caller}::import"}{CODE};
-        $original_import ||= sub { };
-        *{"${app_caller}::import"} = sub {
-            $original_import->(@_);
-            $import->(@_);
+        +{ 
+            map { join( '.', $name, $_ ) => [] }
+                @{ $plugin->ClassHooks }  
         };
-    }
-    return 1;    #as in D1
+    },
+);
 
-    # The plugin is ready now.
+sub add_hooks {
+    my $class = shift;
+    push @{ $class->ClassHooks }, @_;
 }
 
-sub plugin_args {@_}
+# both functions are there for D2::Core::Role::Hookable
+# back-compatibility. Aren't used
+sub supported_hooks { [] }
+sub hook_aliases    { $_[0]->{'hook_aliases'} ||= {} }
 
-sub plugin_setting {
-    my $plugin = caller;
-    my $dsl    = _get_dsl()
-        or croak 'No DSL object found';
+### has() STUFF  ######################################## 
 
-    ( my $plugin_name = $plugin ) =~ s/Dancer2::Plugin:://;
+# our wrapping around Moo::has, done to be able to intercept
+# both 'from_config' and 'plugin_keyword'
+sub _p2_has {
+    my $class = shift;
+    $class->_p2_has_from_config( $class->_p2_has_keyword( @_ ) );
+};
 
-    return $dsl->app->config->{'plugins'}->{$plugin_name} ||= {};
-}
+sub _p2_has_from_config {
+    my( $class, $name, %args ) = @_;
 
-sub register_hook {
-    my (@hooks) = @_;
+    my $config_name = delete $args{'from_config'} 
+        or return ( $name, %args );
 
-    my $caller = caller;
-    my $plugin = $caller;
+    $args{lazy} = 1;
 
-    $plugin =~ s/^Dancer2::Plugin:://;
-    $plugin =~ s/::/_/g;
-
-    my $base_name = "plugin." . lc($plugin);
-    for my $hook (@hooks) {
-        my $hook_name = "${base_name}.$hook";
-        $_hooks->{$caller}->{$hook_name} = $hook;
-    }
-}
-
-sub execute_hook {
-    my $position = shift;
-    my $dsl      = _get_dsl();
-    croak "No DSL object found" if !defined $dsl;
-    $dsl->execute_hook( $position, @_ );
-}
-
-# private
-
-my $dsl_deprecation_wrapper = 0;
-sub import {
-    my $class  = shift;
-    my $plugin = caller;
-
-    # First, export Dancer2::Plugins symbols
-    my @export = qw(
-      execute_hook
-      register_hook
-      register_plugin
-      register
-      on_plugin_import
-      plugin_setting
-      plugin_args
-    );
-
-    for my $symbol (@export) {
-        no strict 'refs';
-        *{"${plugin}::${symbol}"} = *{"Dancer2::Plugin::${symbol}"};
+    if ( ref $config_name eq 'CODE' ) {
+        $args{default} ||= $config_name;
+        $config_name = 1;
     }
 
-    my $dsl = _get_dsl();
-    return if !defined $dsl;
+    $config_name = $name if $config_name eq '1';
+    my $orig_default = $args{default} || sub{}; 
+    $args{default} = sub {
+        my $plugin = shift;
+        my $value = reduce { eval { $a->{$b} } } $plugin->config, split '\.', $config_name;
+        return defined $value ? $value: $orig_default->($plugin);
+    };
 
-# DEPRECATION NOTICE
-# We expect plugin to be written with a $dsl object now, so
-# this keywords will trigger a deprecation notice and will be removed in a later
-# version of Dancer2.
+    return $name => %args;
+}
 
- # Support for Dancer 1 syntax for plugin.
- # Then, compile Dancer 2's DSL keywords into self-contained keywords for the
- # plugin (actually, we call all the symbols by giving them $caller->dsl as
- # their first argument).
- # These modified versions of the DSL are then exported in the namespace of the
- # plugin.
-    if (! grep { $_ eq ':no_dsl' } @_) {
-        for my $symbol ( keys %{ $dsl->keywords } ) {
+sub _p2_has_keyword {
+    my( $class, $name, %args ) = @_;
 
-            # get the original symbol from the real DSL
-            no strict 'refs';
-            no warnings qw( redefine once );
-            my $code = *{"Dancer2::Core::DSL::$symbol"}{CODE};
+    if( my $keyword = delete $args{plugin_keyword} ) {
 
-            # compile it with $caller->dsl
-            my $compiled = sub {
-                carp
-                  "DEPRECATED: $plugin calls '$symbol' instead of '\$dsl->$symbol'.";
-                $code->( $dsl, @_ );
+        $keyword = $name if $keyword eq '1';
+
+        $class->keywords->{$_} = sub { (shift)->$name(@_) }
+            for ref $keyword ? @$keyword : $keyword;
+    }
+
+    return $name => %args;
+}
+
+### ATTRIBUTE HANDLER STUFF ######################################## 
+
+# :PluginKeyword shenanigans
+
+sub PluginKeyword :ATTR(CODE) {
+    my( $class, $sym_ref, $code, undef, $args ) = @_;
+    my $func_name = *{$sym_ref}{NAME};
+    
+    $args = join '', @$args if ref $args eq 'ARRAY';
+
+    for my $name ( split ' ', $args || $func_name ) {
+        $class->keywords->{$name} = $code;
+    }
+
+}
+
+## EXPORT STUFF ##############################################################
+
+# this @EXPORT will only be taken
+# into account when we do a 'use Dancer2::Plugin2'
+# I.e., it'll only do its magic for the 
+# plugins themselves, not when they are
+# called
+our @EXPORT = qw/ :plugin /;
+
+sub _exporter_expand_tag {
+    my( $class, $name, $args, $global ) = @_;
+
+    my $caller = $global->{into};
+
+    return _exporter_plugin($caller)
+        if $name eq 'plugin';
+
+    return _exporter_app($class,$caller,$global)
+        if $name eq 'app' and $caller->can('app');
+
+    return;
+
+}
+
+# plugin has been called within a D2 app. Modify
+# the app and export keywords
+sub _exporter_app {
+    my( $class, $caller, $global ) = @_;
+
+    my $app = eval "${caller}::app()" or return;
+
+    return unless $app->can('with_plugin');
+
+    ( my $short = $class ) =~ s/Dancer2::Plugin:://;
+
+    my $plugin = $app->with_plugin( $short );
+    $global->{plugin} = $plugin;
+
+    return unless $class->can('keywords');
+
+    # deprecated backwards compat: on_plugin_import()
+    $_->($plugin) for @{ $plugin->_DANCER2_IMPORT_TIME_SUBS() };
+
+    # add our hooks to the app, so they're recognized
+    # this is for compatibility so you can call execute_hook()
+    # without the fully qualified plugin name
+    # TODO: what if we register the same hook as another plugin?
+    {
+        foreach my $hook ( keys %{ $plugin->hooks } ) {
+            my ( $pure_name ) = $hook =~ /^plugin\.\w+\.(\w+)$/;
+            $plugin->hook_aliases->{$pure_name} = $hook;
+        }
+    }
+
+    map { [ $_ =>  {plugin => $plugin}  ] } keys %{ $plugin->keywords };
+}
+
+# turns the caller namespace into
+# a D2P2 class, with exported keywords
+sub _exporter_plugin {
+    my $caller = shift;
+
+    eval <<"END";
+        { 
+            package $caller; 
+            use Moo; 
+            use Carp ();
+            use Attribute::Handlers;
+
+            extends 'Dancer2::Plugin2'; 
+
+            our \@EXPORT = ( ':app' ); 
+
+            around has => sub {
+                my( \$orig, \@args ) = \@_;
+                \$orig->( ${caller}->_p2_has( \@args) );
             };
 
-            if ( $symbol eq 'dsl' ) {
-                $compiled = sub { $dsl };
-                $dsl_deprecation_wrapper = $compiled
+            sub PluginKeyword :ATTR(CODE) {
+                goto &Dancer2::Plugin2::PluginKeyword;
             }
 
-            # Bind the newly compiled symbol to the caller's namespace.
-            # As this may redefine a symbol, ensure the new coderef has
-            # the same prototype signature.
-            my $existing = *{"${plugin}::${symbol}"};
-            my $prototype = prototype \&$existing;
-            *{"${plugin}::${symbol}"} = Scalar::Util::set_prototype( \&$compiled, $prototype );
-        }
-    }
+            my \$_keywords = {};
+            sub keywords { \$_keywords }
 
-    # Finally, make sure our caller becomes a Moo::Role
-    # Perl 5.8.5+ mandatory for that trick
-    @_ = ('Moo::Role');
-    goto &Moo::Role::import;
+            my \$_ClassHooks = [];
+            sub ClassHooks { \$_ClassHooks }
+
+            # deprecated backwards compat
+            sub register_plugin {1}
+
+            sub register {
+                my ( \$keyword, \$sub ) = \@_;
+                \$_keywords->{\$keyword} = \$sub;
+
+                # Exporter::Tiny doesn't seem to generate the subs
+                # in the caller properly, so we have to do it manually
+                {
+                    no strict 'refs';
+                    *{"${caller}::\$keyword"} = \$sub;
+                }
+            }
+
+            my \@_DANCER2_IMPORT_TIME_SUBS;
+            sub _DANCER2_IMPORT_TIME_SUBS {\\\@_DANCER2_IMPORT_TIME_SUBS}
+            sub on_plugin_import (&) {
+                push \@_DANCER2_IMPORT_TIME_SUBS, \$_[0];
+            }
+
+            sub register_hook { goto &plugin_hooks }
+
+            sub dancer_app {
+                Carp::carp "Plugin DSL method 'dancer_app' is deprecated. "
+                         . "Use 'app' instead'.\n";
+
+                \$_[0]->app;
+            }
+
+            sub request {
+                Carp::carp "Plugin DSL method 'request' is deprecated. "
+                         . "Use 'app->request' instead'.\n";
+
+                \$_[0]->app->request;
+            }
+        }
+END
+
+    die $@ if $@;
+
+    return map { [ $_ => { class => $caller } ] } 
+               qw/ plugin_keywords plugin_hooks /;
 }
 
-sub _get_dsl {
-    my $dsl;
-    my $deep = 2;
-    while ( my $caller = caller( $deep++ ) ) {
-        my $caller_dsl = $caller->can('dsl');
-        next if ! $caller_dsl || $caller_dsl == $dsl_deprecation_wrapper;
-        $dsl = $caller->dsl;
-        last if defined $dsl && length( ref($dsl) );
-    }
+sub _exporter_expand_sub {
+    my( $plugin, $name, $args, $global ) = @_;
+    my $class = $args->{class};
 
-    return $dsl;
+    return _exported_plugin_keywords($plugin,$class)
+        if $name eq 'plugin_keywords';
+
+    return _exported_plugin_hooks($class) 
+        if $name eq 'plugin_hooks';
+
+    # otherwise, we're exporting a keyword
+
+    my $p = $args->{plugin};
+    my $sub = $p->keywords->{$name};
+    return $name => sub(@) { $sub->($p,@_) };
+}
+
+# define the exported 'plugin_keywords'
+sub _exported_plugin_keywords{
+    my( $plugin, $class ) = @_;
+
+    return plugin_keywords => sub(@) {
+        while( my $name = shift @_ ) {
+            my $sub = ref $_[0] eq 'CODE' 
+                ? shift @_ 
+                : eval '\&'.$class."::" . ( ref $name ? $name->[0] : $name );
+            $class->keywords->{$_} = $sub for ref $name ? @$name : $name;
+        }
+    }
+}
+
+sub _exported_plugin_hooks {
+    my $class = shift;
+    return plugin_hooks => sub (@) { $class->add_hooks(@_) }
 }
 
 1;
 
 __END__
 
-=head1 DESCRIPTION
+=head1 SYNOPSIS
 
-You can extend Dancer2 by writing your own plugin. A plugin is a module that
-exports a bunch of symbols to the current namespace (the caller will see all
-the symbols defined via C<register>).
+The plugin itself:
 
-Note that you have to C<use> the plugin wherever you want to use its symbols.
-For instance, if you have Webapp::App1 and Webapp::App2, both loaded from your
-main application, they both need to C<use FooPlugin> if they want to use the
-symbols exported by C<FooPlugin>.
 
-For a more gentle introduction to Dancer2 plugins, see L<Dancer2::Plugins>.
+    package Dancer2::Plugin::Polite;
 
-=method register
+    use strict;
+    use warnings;
 
-    register 'my_keyword' => sub { ... } => \%options;
+    use Dancer2::Plugin2;
 
-Allows the plugin to define a keyword that will be exported to the caller's
-namespace.
-
-The first argument is the symbol name, the second one the coderef to execute
-when the symbol is called.
-
-The coderef receives as its first argument the Dancer2::Core::DSL object.
-
-Plugins B<must> use the DSL object to access application components and work
-with them directly.
-
-    sub {
-        my $dsl = shift;
-        my @args = @_;
-
-        my $app     = $dsl->app;
-        my $request = $app->request;
-
-        if ( $app->session->read('logged_in') ) {
-            ...
+    has smiley => (
+        is => 'ro',
+        default => sub {
+            $_[0]->config->{smiley} || ':-)'
         }
-    };
+    );
 
-As an optional third argument, it's possible to give a hash ref to C<register>
-in order to set some options.
+    plugin_keywords 'add_smileys';
 
-The option C<is_global> (boolean) is used to declare a global/non-global keyword
-(by default all keywords are global). A non-global keyword must be called from
-within a route handler (eg: C<session> or C<param>) whereas a global one can be
-called from everywhere (eg: C<dancer_version> or C<setting>).
+    sub BUILD {
+        my $plugin = shift;
 
-    register my_symbol_to_export => sub {
-        # ... some code
-    }, { is_global => 1} ;
+        $plugin->app->add_hook( Dancer2::Core::Hook->new(
+            name => 'after',
+            code => sub { $_[0]->content( $_[0]->content . " ... please?" ) }
+        ));
 
-=method on_plugin_import
-
-Allows the plugin to take action each time it is imported.
-It is prototyped to take a single code block argument, which will be called
-with the DSL object of the package importing it.
-
-For example, here is a way to install a hook in the importing app:
-
-    on_plugin_import {
-        my $dsl = shift;
-        $dsl->app->add_hook(
-            Dancer2::Core::Hook->new(
-                name => 'before',
-                code => sub { ... },
-            )
+        $plugin->app->add_route(
+            method => 'get',
+            regexp => '/goodbye',
+            code   => sub { 
+                my $app = shift;
+                'farewell, ' . $app->request->params->{name};
+            },
         );
-    };
 
-=method register_plugin
+    }
 
-A Dancer2 plugin must end with this statement. This lets the plugin register all
-the symbols defined with C<register> as exported symbols:
+    sub add_smileys {
+        my( $plugin, $text ) = @_;
 
-    register_plugin;
+        $text =~ s/ (?<= \. ) / $plugin->smiley /xeg;
 
-Register_plugin returns 1 on success and undef if it fails.
+        return $text;
+    }
 
-=method plugin_args
+    1;
 
-Simple method to retrieve the parameters or arguments passed to a
-plugin-defined keyword. Although not relevant for Dancer 1 only, or
-Dancer 2 only, plugins, it is useful for universal plugins.
+then to load into the app:
 
-  register foo => sub {
-     my ($dsl, @args) = plugin_args(@_);
-     ...
-  }
 
-Note that Dancer 1 will return undef as the DSL object.
+    package MyApp;
 
-=method plugin_setting
-
-If C<plugin_setting> is called inside a plugin, the appropriate configuration
-will be returned. The C<plugin_name> should be the name of the package, or,
-if the plugin name is under the B<Dancer2::Plugin::> namespace (which is
-recommended), the remaining part of the plugin name.
-
-Configuration for plugin should be structured like this in the config.yml of
-the application:
-
-  plugins:
-    plugin_name:
-      key: value
-
-Enclose the remaining part in quotes if it contains ::, e.g.
-for B<Dancer2::Plugin::Foo::Bar>, use:
-
-  plugins:
-    "Foo::Bar":
-      key: value
-
-=method register_hook
-
-Allows a plugin to declare a list of supported hooks. Any hook declared like so
-can be executed by the plugin with C<execute_hook>.
-
-    register_hook 'foo';
-    register_hook 'foo', 'bar', 'baz';
-
-=method execute_hook
-
-Allows a plugin to execute the hooks attached at the given position
-
-    $dsl->execute_hook( 'some_hook' );
-
-Arguments can be passed which will be received by handlers attached to that
-hook:
-
-    $dsl->execute_hook( 'some_hook', @some_args );
-
-The hook must have been registered by the plugin first, with C<register_hook>.
-
-=head1 EXAMPLE PLUGIN
-
-The following code is a dummy plugin that provides a keyword 'logout' that
-destroys the current session and redirects to a new URL specified in
-the config file as C<after_logout>.
-
-  package Dancer2::Plugin::Logout;
-  use Dancer2::Plugin;
-
-  register logout => sub {
-    my $dsl  = shift;
-    my $app  = $dsl->app;
-    my $conf = plugin_setting();
-
-    $app->destroy_session;
-
-    return $app->redirect( $conf->{after_logout} );
-  };
-
-  register_plugin;
-  1;
-
-And in your application:
-
-    package My::Webapp;
+    use strict;
+    use warnings;
 
     use Dancer2;
-    use Dancer2::Plugin::Logout;
 
-    get '/logout' => sub { logout };
+    BEGIN { # would usually be in config.yml
+        set plugins => {
+            Polite => {
+                smiley => '8-D',
+            },
+        };
+    }
+
+    use Dancer2::Plugin::Polite;
+
+    get '/' => sub {
+        add_smileys( 'make me a sandwich.' );
+    };
+
+    1;
+
+
+=head1 DESCRIPTION
+
+This is an alternate plugin basis for Dancer2.
+
+=head2 Writing the plugin
+
+=head3 C<use Dancer2::Plugin2>
+
+The plugin must begin with
+
+    use Dancer2::Plugin2;
+
+which will turn the package into a L<Moo> class that inherits from L<Dancer2::Plugin2>. The base class provides the plugin with 
+two attributes: C<app>, which is populated with the Dancer2 app object for which
+the plugin is being initialized for, and C<config> which holds the plugin 
+section of the application configuration. 
+
+=head3 Modifying the app at building time
+
+If the plugin needs to tinker with the application -- add routes or hooks, for example --
+it can do so within its C<BUILD()> function.
+
+    sub BUILD {
+        my $plugin = shift;
+
+        $plugin->app->add_route( ... );
+    }
+
+=head3 Adding keywords
+
+=head4 Via C<plugin_keywords>
+
+Keywords that the plugin wishes to export to the Dancer2 app can be defined via the C<plugin_keywords> keyword:
+
+    plugin_keywords qw/ 
+        add_smileys 
+        add_sad_kitten  
+    /;
+
+Each of the keyword will resolve to the class method of the same name. When invoked as keyword, it'll be passed
+the plugin object as its first argument.
+
+    sub add_smileys {
+        my( $plugin, $text ) = @_;
+
+        return join ' ', $text, $plugin->smiley;
+    }
+
+    # and then in the app
+
+    get '/' => sub {
+        add_smileys( "Hi there!" );
+    };
+
+You can also pass the functions directly to C<plugin_keywords>.
+
+    plugin_keywords 
+        add_smileys => sub { 
+            my( $plugin, $text ) = @_;
+
+            $text =~ s/ (?<= \. ) / $plugin->smiley /xeg;
+
+            return $text;
+        },
+        add_sad_kitten => sub { ... };
+
+Or a mix of both styles. We're easy that way:
+
+    plugin_keywords 
+        add_smileys => sub { 
+            my( $plugin, $text ) = @_;
+
+            $text =~ s/ (?<= \. ) / $plugin->smiley /xeg;
+
+            return $text;
+        },
+        'add_sad_kitten';
+
+    sub add_sad_kitten {
+        ...;
+    }
+
+If you want several keywords to be synonyms calling the same 
+function, you can list them in an arrayref. The first 
+function of the list is taken to be the "real" method to
+link to the keywords.
+
+    plugin_keywords [qw/ add_smileys add_happy_face /];
+
+    sub add_smileys { ... }
+
+Calls to C<plugin_keywords> are cumulative.
+
+=head4 Via the C<:PluginKeyword> function attribute
+
+Keywords can also be defined by adding the C<:PluginKeyword> attribute 
+to the function you wish to export.
+
+    sub foo :PluginKeyword { ... }
+
+    sub bar :PluginKeyword( baz quux ) { ... }
+
+    # equivalent to
+
+    sub foo { ... }
+    sub bar { ... }
+
+    plugin_keywords 'foo', [ qw/ baz quux / ] => \&bar;
+
+=head4 For an attribute
+
+You can also turn an attribute of the plugin into a keyword. 
+
+    has foo => (
+        is => 'ro',
+        plugin_keyword => 1,  # keyword will be 'foo'
+    );
+
+    has bar => (
+        is => 'ro',
+        plugin_keyword => 'quux',  # keyword will be 'quux'
+    );
+
+    has baz => (
+        is => 'ro',
+        plugin_keyword => [ 'baz', 'bazz' ],  # keywords will be 'baz' and 'bazz'
+    );
+
+
+
+=head3 Accessing the plugin configuration
+
+The plugin configuration is available via the C<config()> method.
+
+    sub BUILD {
+        my $plugin = shift;
+
+        if ( $plugin->config->{feeling_polite} ) {
+            $plugin->app->add_hook( Dancer2::Core::Hook->new(
+                name => 'after',
+                code => sub { $_[0]->content( $_[0]->content . " ... please?" ) }
+            ));
+        }
+    }
+
+=head3 Getting default values from config file
+
+Since initializing a plugin with either a default or a value passed via the configuration file, 
+like
+
+    has smiley => (
+        is => 'ro',
+        default => sub {
+            $_[0]->config->{smiley} || ':-)'
+        }
+    );
+
+C<Dancer2::Plugin2> allows for a C<from_config> key in the attribute definition.
+Its value is the plugin configuration key that will be used to initialize the attribute.
+
+If it's given the value C<1>, the name of the attribute will be taken as the configuration key.
+
+Nested hash keys can also be refered to using a dot notation.  
+
+If the plugin configuration has no value for the given key, the attribute default, if specified, will be honored.
+
+If the key is given a coderef as value, it's considered to be a C<default> value combo:
+
+    has foo => (
+        is => 'ro',
+        from_config => sub { 'my default' },
+    );
+
+
+    # equivalent to
+    has foo => (
+        is => 'ro',
+        from_config => 'foo',
+        default => sub { 'my default' },
+    );
+
+For example:
+
+    # in config.yml
+
+    plugins:
+        Polite:
+            smiley: ':-)'
+            greeting:
+                casual: Hi!
+                formal: How do you do?
+
+
+    # in the plugin
+    
+    has smiley => (             # will be ':-)'
+        is          => 'ro',
+        from_config => 1,
+        default     => sub { ':-(' },
+    );
+
+    has casual_greeting => (    # will be 'Hi!'
+        is          => 'ro',
+        from_config => 'greeting.casual',
+    );
+
+    has apology => (            # will be 'sorry'
+        is          => 'ro',
+        from_config => 'apology',
+        default     => sub { 'sorry' },
+    )
+
+    has closing => (            # will be 'See ya!'
+        is => 'ro',
+        from_config => sub { 'See ya!' },
+    );
+
+=head3 Accessing the parent Dancer app
+
+If the plugin is instantiated within a Dancer app, it'll be
+accessible via the method C<app()>.
+
+    sub BUILD {
+        my $plugin = shift;
+
+        $plugin->app->add_route( ... );
+    }
+
+
+=head2 Using the plugin within the app
+
+A plugin is loaded via
+
+    use Dancer2::Plugin::Polite;
+
+The plugin will assume that it's loading within a Dancer module and will 
+automatically register itself against its C<app()> and export its keywords
+to the local namespace. If you don't want this to happen, specify that you
+don't want anything imported via empty parentheses when C<use>ing the module:
+
+    use Dancer2::Plugin::Polite ();
+
+
+=head2 Plugins using plugins
+
+This is a (relatively) simple way for a plugin to use another plugin: 
+
+
+    package Dancer2::Plugin::SourPuss;
+
+    has polite => (
+        is => 'ro',
+        lazy => 1,
+        default => sub {
+            # if the app already has the 'Polite' plugin loaded, it'll return
+            # it. If not, it'll load it in the app, and then return it.
+            scalar $_[0]->app->with_plugins( 'Polite' )
+        },
+        handles => { 'smiley' => 'smiley' },
+    );
+
+    sub keywords { qw/ killjoy / }
+
+    sub killjoy {
+        my( $plugin, $text ) = @_;
+
+        my $smiley = $plugin->smiley;
+
+        $text =~ s/ $smiley />:-(/xg;
+
+        $text;
+    }
+
+=head2 Hooks
+
+New plugin hooks are declared via C<plugin_hooks>.
+
+    plugin_hooks 'my_hook', 'my_other_hook';
+
+Hooks are prefixed with C<plugin.plugin_name>. So the plugin 
+C<my_hook> coming from the plugin C<Dancer2::Plugin::MyPlugin> will have the hook name
+C<plugin.myplugin.my_hook>.
+
+Hooks are executed within the plugin by calling them via the associated I<app>.
+
+    $plugin->app->execute_plugin_hook( 'my_hook' );
+
+You can also call any other hook if you provide the full name using the
+C<execute_hook> method:
+
+    $plugin->app->execute_hook( 'core.app.route_exception' );
+
+Or using their alias:
+
+    $plugin->app->execute_hook( 'on_route_exception' );
+
+=head2 Writing Test Gotchas
+
+=head3 Constructor for Dancer2::Plugin::Foo has been inlined and cannot be updated
+
+You'll usually get this one because you are defining both the plugin and app 
+in your test file, and the runtime creation of Moo's attributes happens after
+the compile-time import voodoo dance.
+
+To get around this nightmare, wrap your plugin definition in a C<BEGIN> block.
+
+
+    BEGIN {  
+        package Dancer2::Plugin::Foo;
+
+        use Dancer2::Plugin2;
+
+            has bar => (
+                is => 'ro',
+                from_config => 1,
+            );
+
+            plugin_keywords qw/ bar /;
+
+    }
+
+    {  
+        package MyApp; 
+
+        use Dancer2;
+        use Dancer2::Plugin::Foo;
+
+        bar();
+    }
+
+=head3 You cannot overwrite a locally defined method (bar) with a reader
+
+If you set an object attribute of your plugin to be a keyword as well, you need
+to call C<plugin_keywords> after the attribute definition.
+
+    package Dancer2::Plugin::Foo;
+
+    use Dancer2::Plugin2;
+
+    has bar => (
+        is => 'ro',
+    );
+
+    plugin_keywords 'bar';
 
 =cut
