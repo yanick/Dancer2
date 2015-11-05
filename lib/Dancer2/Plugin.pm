@@ -1,4 +1,4 @@
-package Dancer2::Plugin2;
+package Dancer2::Plugin;
 # ABSTRACT: base class for Dancer2 plugins
 
 use strict;
@@ -122,7 +122,7 @@ sub PluginKeyword :ATTR(CODE) {
 ## EXPORT STUFF ##############################################################
 
 # this @EXPORT will only be taken
-# into account when we do a 'use Dancer2::Plugin2'
+# into account when we do a 'use Dancer2::Plugin'
 # I.e., it'll only do its magic for the 
 # plugins themselves, not when they are
 # called
@@ -188,7 +188,7 @@ sub _exporter_plugin {
             use Carp ();
             use Attribute::Handlers;
 
-            extends 'Dancer2::Plugin2'; 
+            extends 'Dancer2::Plugin'; 
 
             our \@EXPORT = ( ':app' ); 
 
@@ -198,7 +198,7 @@ sub _exporter_plugin {
             };
 
             sub PluginKeyword :ATTR(CODE) {
-                goto &Dancer2::Plugin2::PluginKeyword;
+                goto &Dancer2::Plugin::PluginKeyword;
             }
 
             my \$_keywords = {};
@@ -302,7 +302,7 @@ The plugin itself:
     use strict;
     use warnings;
 
-    use Dancer2::Plugin2;
+    use Dancer2::Plugin;
 
     has smiley => (
         is => 'ro',
@@ -375,13 +375,13 @@ This is an alternate plugin basis for Dancer2.
 
 =head2 Writing the plugin
 
-=head3 C<use Dancer2::Plugin2>
+=head3 C<use Dancer2::Plugin>
 
 The plugin must begin with
 
-    use Dancer2::Plugin2;
+    use Dancer2::Plugin;
 
-which will turn the package into a L<Moo> class that inherits from L<Dancer2::Plugin2>. The base class provides the plugin with 
+which will turn the package into a L<Moo> class that inherits from L<Dancer2::Plugin>. The base class provides the plugin with 
 two attributes: C<app>, which is populated with the Dancer2 app object for which
 the plugin is being initialized for, and C<config> which holds the plugin 
 section of the application configuration. 
@@ -526,7 +526,7 @@ like
         }
     );
 
-C<Dancer2::Plugin2> allows for a C<from_config> key in the attribute definition.
+C<Dancer2::Plugin> allows for a C<from_config> key in the attribute definition.
 Its value is the plugin configuration key that will be used to initialize the attribute.
 
 If it's given the value C<1>, the name of the attribute will be taken as the configuration key.
@@ -679,7 +679,7 @@ To get around this nightmare, wrap your plugin definition in a C<BEGIN> block.
     BEGIN {  
         package Dancer2::Plugin::Foo;
 
-        use Dancer2::Plugin2;
+        use Dancer2::Plugin;
 
             has bar => (
                 is => 'ro',
@@ -706,7 +706,7 @@ to call C<plugin_keywords> after the attribute definition.
 
     package Dancer2::Plugin::Foo;
 
-    use Dancer2::Plugin2;
+    use Dancer2::Plugin;
 
     has bar => (
         is => 'ro',
