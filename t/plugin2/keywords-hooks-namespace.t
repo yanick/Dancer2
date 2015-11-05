@@ -1,6 +1,6 @@
 BEGIN {
   package Dancer2::Plugin::Plugin1;
-  use Dancer2::Plugin2;
+  use Dancer2::Plugin;
 
     has one => (
       is => 'ro',
@@ -12,8 +12,8 @@ BEGIN {
 }
 
 BEGIN {
-  package Dancer2::Plugin::Plugin2;
-  use Dancer2::Plugin2;
+  package Dancer2::Plugin::Plugin;
+  use Dancer2::Plugin;
 
     has two => (
       is => 'ro',
@@ -30,7 +30,7 @@ use Test::Deep;
 
 my %tests = (
     'Plugin1' => { keywords => [ 'one' ], hooks => [ 'un' ] },
-    'Plugin2' => { keywords => [ 'two' ], hooks => [ 'deux' ] },
+    'Plugin' => { keywords => [ 'two' ], hooks => [ 'deux' ] },
 );
 
 subtest $_ => sub {
@@ -47,7 +47,7 @@ subtest app_side => sub {
 
     use Dancer2 '!pass';
     use Dancer2::Plugin::Plugin1;
-    use Dancer2::Plugin::Plugin2;
+    use Dancer2::Plugin::Plugin;
 
     use Test::More;
     use Test::Deep;
@@ -58,7 +58,7 @@ subtest app_side => sub {
     is_deeply { map { ref $_ => [ keys %{ $_->hooks } ] } @{ app()->plugins } },
         {
             'Dancer2::Plugin::Plugin1' => [ 'plugin.plugin1.un' ],
-            'Dancer2::Plugin::Plugin2' => [ 'plugin.plugin2.deux' ],
+            'Dancer2::Plugin::Plugin' => [ 'plugin.plugin2.deux' ],
         };
 };
 
